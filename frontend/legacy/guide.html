@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>接入指南 · Live Dashboard</title>
+  <meta name="description" content="手机 MacroDroid / 电脑 Agent 接入与服务器部署指南">
+  <meta name="theme-color" content="#fff5f8">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="petals" aria-hidden="true">
+    <span></span><span></span><span></span><span></span>
+  </div>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="7" y="2.5" width="10" height="19" rx="2.5"/>
+            <path d="M10.5 18.5h3"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>接入指南</h1>
+          <p class="brand-sub">手机 MacroDroid · 电脑 Agent · 服务器部署</p>
+        </div>
+      </div>
+      <div class="header-meta">
+        <button class="icon-btn" id="theme-toggle" type="button" aria-label="切换深浅色">
+          <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 13.5A9 9 0 1 1 10.5 3a7 7 0 0 0 10.5 10.5Z"/>
+          </svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+          </svg>
+        </button>
+        <a class="ghost-btn" href="/">返回面板</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="page guide-page">
+    <section class="hero guide-hero card">
+      <div>
+        <p class="hero-kicker">GETTING STARTED</p>
+        <h1>把电脑和手机都接进面板</h1>
+        <p>手机用 MacroDroid 宏上报，电脑跑一个 PowerShell 小 agent（自带 AES 加密），服务部署在服务器上，设备发 POST、面板拉数据展示。所有配置都能在管理面板里完成。</p>
+      </div>
+    </section>
+
+    <section class="card guide-section">
+      <h2 style="font-size:16px">手机接入（MacroDroid）</h2>
+      <p class="section-note">无需安装 App，用宏自动上报当前应用</p>
+      <div class="step">
+        <span class="step-num">1</span>
+        <div class="step-body">
+          <h3>拿到手机令牌</h3>
+          <p>第一次启动服务时会自动生成 <span class="inline-code">config.json</span>，其中 <span class="inline-code">devices</span> 里 <span class="inline-code">my-phone</span> 的 <span class="inline-code">token</span> 就是手机令牌（启动日志里也会打印一次）。也可以直接在 <a href="/admin" style="color:var(--accent);font-weight:600">管理面板</a> 里查看、复制或重新生成令牌。</p>
+          <p>令牌相当于密码，<b>不要发到公开群聊或截图里</b>。想换令牌，在管理面板里一键重新生成即可。</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num">2</span>
+        <div class="step-body">
+          <h3>确认上报地址</h3>
+          <p>手机和电脑连同一个 Wi-Fi 时，用下面这个地址（如果部署到了服务器，就是服务器的公网地址）：</p>
+          <div class="code-block">
+            <button class="copy-btn" type="button" data-copy-target="endpoint">复制</button>
+            <pre><code id="endpoint">/api/report</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num">3</span>
+        <div class="step-body">
+          <h3>在 MacroDroid 新建宏</h3>
+          <p><b>触发器</b>：先加“应用启动/切换”（Application Launched / App Changed），把常用的应用勾上；再加一个“定时器”每 1 分钟触发一次，避免长时间停留时状态不刷新。</p>
+          <p><b>动作</b>：添加“HTTP 请求”（HTTP Request），按下表填写：</p>
+          <table class="field-table">
+            <thead>
+              <tr><th>字段</th><th>填什么</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>方法</td><td><code>POST</code></td></tr>
+              <tr><td>URL</td><td>上一步的地址</td></tr>
+              <tr><td>内容类型</td><td><code>application/json</code></td></tr>
+              <tr><td>请求头</td><td><code>Authorization: Bearer &lt;手机令牌&gt;</code></td></tr>
+              <tr><td>请求体</td><td>见下方 JSON</td></tr>
+            </tbody>
+          </table>
+          <p>请求体里的 <span class="inline-code">{app_package}</span>、<span class="inline-code">{app_name}</span>、<span class="inline-code">{battery}</span> 都是 MacroDroid 的魔变文本，插入时会自动替换成实际值。不确定写法时，点输入框旁的「…」按钮，从列表里插入「前台应用名称 / 前台应用包名 / 电池电量」，宏会自动填对。</p>
+          <div class="code-block">
+            <button class="copy-btn" type="button" data-copy-target="body">复制</button>
+            <pre><code id="body">{
+  "app_id": "{app_package}",
+  "app_label": "{app_name}",
+  "battery_percent": {battery}
+}</code></pre>
+          </div>
+          <p>如果某些机型没有 <span class="inline-code">{battery}</span>，把这一行删掉也能正常工作。想同时上报窗口标题，可以加 <span class="inline-code">"window_title": "{window_title}"</span>（聊天、银行等私密应用会自动隐藏标题）。</p>
+          <p>如果你的 MacroDroid 版本找不到自定义请求头，也可以把令牌放到 URL 后面：<span class="inline-code">/api/report?token=&lt;手机令牌&gt;</span>，效果一样。</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num">4</span>
+        <div class="step-body">
+          <h3>测试一下</h3>
+          <p>可以在电脑上先用 curl 验证令牌和地址（把地址与令牌换成你自己的）：</p>
+          <div class="code-block">
+            <button class="copy-btn" type="button" data-copy-target="curl">复制</button>
+            <pre><code id="curl">curl -X POST "http://127.0.0.1:3000/api/report" \
+  -H "Authorization: Bearer &lt;手机令牌&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"app_id":"com.tencent.mm","app_label":"微信","battery_percent":73}'</code></pre>
+          </div>
+          <p>返回 <span class="inline-code">{"ok":true}</span> 就说明通了，面板上会立刻出现这台手机。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card guide-section">
+      <h2 style="font-size:16px">电脑接入（PC Agent）</h2>
+      <p class="section-note">Windows 自带 PowerShell 即可运行，敏感信息全程加密上报</p>
+      <div class="step">
+        <span class="step-num">1</span>
+        <div class="step-body">
+          <h3>拿到电脑令牌</h3>
+          <p>打开 <a href="/admin" style="color:var(--accent);font-weight:600">管理面板</a>，登录后在「设备管理」里找到电脑设备，复制令牌（首次登录的密码在服务第一次启动的日志里打印过，也可以在面板里修改）。</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <div class="step-body">
+          <h3>运行 agent</h3>
+          <p>把项目里的 <span class="inline-code">agent/pc-agent.ps1</span> 拷到电脑上（比如 <span class="inline-code">D:\live-dashboard\agent\</span>），在 PowerShell 里执行：</p>
+          <div class="code-block">
+            <button class="copy-btn" type="button" data-copy-target="agent-cmd">复制</button>
+            <pre><code id="agent-cmd">powershell -ExecutionPolicy Bypass -File agent\pc-agent.ps1 -ServerUrl http://你的服务器地址:3000 -Token 电脑令牌</code></pre>
+          </div>
+          <p>agent 会每隔几秒检查一次前台窗口，应用切换或每 60 秒心跳时上报；报文自动走 <b>AES-256 加密 + HMAC 防篡改</b>，无需额外配置。可用 <span class="inline-code">-IntervalSeconds</span> 调整检查间隔，<span class="inline-code">Ctrl+C</span> 停止。</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <div class="step-body">
+          <h3>开机自启（可选）</h3>
+          <p>新建一个 <span class="inline-code">start-agent.cmd</span>（内容就是上面那条命令），按 <span class="inline-code">Win+R</span> 输入 <span class="inline-code">shell:startup</span> 回车，把 cmd 文件的快捷方式放进去，开机就会静默上报。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card guide-section">
+      <h2 style="font-size:16px">部署到服务器</h2>
+      <p class="section-note">后端和前端是同一个 Node 服务，一次部署全部搞定</p>
+      <div class="step">
+        <span class="step-num">1</span>
+        <div class="step-body">
+          <h3>安装 Node 并启动</h3>
+          <p>服务器装好 Node.js 18+，把整个项目目录传上去（比如 <span class="inline-code">/opt/live-dashboard</span>），然后：</p>
+          <div class="code-block">
+            <button class="copy-btn" type="button" data-copy-target="deploy-cmd">复制</button>
+            <pre><code id="deploy-cmd">node server.js
+# 后台常驻（推荐 pm2）
+npm i -g pm2
+pm2 start server.js --name live-dashboard
+pm2 save && pm2 startup</code></pre>
+          </div>
+          <p>首次启动会自动生成 <span class="inline-code">config.json</span> 与管理面板密码（打印在日志里），并创建 <span class="inline-code">data/</span> 数据目录。</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <div class="step-body">
+          <h3>开放端口 / 反向代理</h3>
+          <p>在云厂商安全组放行 <span class="inline-code">config.json</span> 里的端口（默认 3000）；或者用 Nginx / 宝塔把 80/443 反向代理到 3000，对外只暴露 80/443。</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <div class="step-body">
+          <h3>开启 HTTPS（强烈建议）</h3>
+          <p>手机 MacroDroid 上报的是明文 JSON，必须配 HTTPS 才能保证传输隐私。两种方式任选：</p>
+          <p><b>方式 A</b>：Nginx / Caddy 反向代理 + Let's Encrypt 证书，服务本身保持 HTTP；<br><b>方式 B</b>：直接启用内置 HTTPS，在 <span class="inline-code">config.json</span> 里加：</p>
+          <div class="code-block">
+            <button class="copy-btn" type="button" data-copy-target="https-cfg">复制</button>
+            <pre><code id="https-cfg">{
+  "https": { "enabled": true, "cert": "/etc/ssl/live-dashboard/fullchain.pem", "key": "/etc/ssl/live-dashboard/privkey.pem" }
+}</code></pre>
+          </div>
+          <p>证书路径填 fullchain 与私钥的绝对路径，重启服务生效；证书读取失败会自动回退 HTTP 并在日志里提示。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card guide-section">
+      <h2 style="font-size:16px">加密传输与隐私说明</h2>
+      <p class="section-note">敏感信息（窗口标题等）密文上送，服务器只存脱敏结果</p>
+      <p><b>电脑端</b>：agent 的每次上报都是一个加密信封——用设备令牌在本地派生密钥，AES-256-CBC 加密 + HMAC-SHA256 完整性校验（encrypt-then-MAC），服务器先验签再解密，抓包只能看到密文；令牌本身不随请求明文之外传输（仅作密钥来源与鉴权）。</p>
+      <p><b>手机端</b>：MacroDroid 无法在宏里做应用层加密，上报的是明文 JSON，因此<b>请务必让上报地址走 HTTPS</b>（反向代理或内置 HTTPS 均可），浏览面板同样建议全程 HTTPS。</p>
+      <p><b>服务端</b>：聊天、邮件、金融、密码类应用会整体匿名化为「私密应用」，窗口标题原文不落盘、不下发到前端。</p>
+      <div class="notice">
+        <b>统一管理面板：</b>站点名称、离线判定、数据保留天数、设备与令牌增删、清空数据、修改管理密码，都在 <a href="/admin" style="color:var(--accent);font-weight:600">/admin</a> 里完成，保存即时生效，无需重启服务。
+      </div>
+    </section>
+
+    <section class="card guide-section">
+      <h2 style="font-size:16px">在线测试上报</h2>
+      <p class="section-note">令牌只保存在本次页面内存里，刷新即清除；测试记录会真的出现在面板上。</p>
+      <form class="test-form" id="test-form">
+        <div class="form-row">
+          <input id="token-input" type="password" autocomplete="off" placeholder="手机令牌（config.json 里的 token）">
+        </div>
+        <div class="form-row">
+          <input id="app-id-input" type="text" value="com.tencent.mm" placeholder="app_id，例如 com.tencent.mm">
+          <input id="app-label-input" type="text" value="微信" placeholder="应用显示名，例如 微信">
+        </div>
+        <div class="form-row">
+          <input id="battery-input" type="number" min="0" max="100" value="73" placeholder="电量 0-100">
+          <button class="primary-btn" type="submit">发送测试上报</button>
+        </div>
+        <div class="test-result" id="test-result"></div>
+      </form>
+      <div class="notice">
+        <b>隐私说明：</b>面板是公开只读的。服务端不会保存窗口标题原文；聊天、邮件、金融、密码类应用会整体匿名化成“私密应用”，只保留使用时长。
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>Live Dashboard · 接入指南</span>
+    <span class="footer-links"><a href="/admin">管理面板</a><a href="/">返回面板</a></span>
+  </footer>
+
+  <script src="/guide.js"></script>
+</body>
+</html>

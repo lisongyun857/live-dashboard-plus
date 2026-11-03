@@ -1,0 +1,9 @@
+node_modules/
+frontend/dist/
+config.json
+data/
+.tools/
+.screenshots/
+.local/
+app/release/
+*.log
