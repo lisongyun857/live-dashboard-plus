@@ -1,4 +1,4 @@
-﻿﻿﻿﻿# Live Dashboard 电脑 agent · 公共模块
+﻿# Live Dashboard 电脑 agent · 公共模块
 # 被 pc-agent.ps1 / agent-tray.ps1 / agent-ui.ps1 引用（. "$PSScriptRoot\agent-common.ps1"）
 # 只用 Windows PowerShell 自带能力，无需安装任何依赖。
 

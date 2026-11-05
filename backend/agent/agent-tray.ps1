@@ -1,4 +1,4 @@
-﻿﻿﻿﻿<#
+﻿<#
   Live Dashboard 电脑 agent · 托盘宿主
   - 无窗口运行（由 start-agent.vbs 用 wscript 启动）
   - 托盘右键：打开配置 / 查看日志 / 重启上报 / 退出

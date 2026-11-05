@@ -1,4 +1,4 @@
-﻿﻿﻿﻿<#
+﻿<#
   Live Dashboard 电脑 agent · 图形化配置界面（Windows 自带 WinForms，无需安装任何依赖）
   双击 start-agent.cmd 即可打开本界面。
 #>
