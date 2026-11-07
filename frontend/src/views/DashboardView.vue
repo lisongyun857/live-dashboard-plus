@@ -56,6 +56,13 @@ const focusUpdated = computed(() => {
   return `最后更新 ${formatRelative(focus.value.last_seen_at)} · ${formatClock(focus.value.last_seen_at)}`;
 });
 
+const focusBattery = computed(() => {
+  const raw = focus.value && focus.value.extra ? Number(focus.value.extra.battery_percent) : NaN;
+  return Number.isFinite(raw) ? Math.max(0, Math.min(100, Math.round(raw))) : null;
+});
+
+const focusCharging = computed(() => Boolean(focus.value && focus.value.extra && focus.value.extra.battery_charging));
+
 // ── 时间线行：每台设备一条轨道 ─────────────────────────────────────────
 const timelineRows = computed(() => {
   const empty = { rows: [], totalMinutes: 0, hasData: false };
@@ -79,8 +86,12 @@ const timelineRows = computed(() => {
       if (!Number.isFinite(end) || end <= start) end = start + 60 * 1000;
       const left = Math.max(0, Math.min(100, ((start - dayStart) / dayMs) * 100));
       const width = Math.max(0.18, Math.min(100 - left, ((end - start) / dayMs) * 100));
-      const tip = `${s.app_name} · ${formatClock(s.started_at)}–${s.ended_at ? formatClock(s.ended_at) : '…'} · ${formatMinutes(s.duration_minutes)}`;
-      return { left, width, color: colorFor(s.app_name), tip };
+      const sleeping = s.screen_on === false;
+      const span = `${formatClock(s.started_at)}–${s.ended_at ? formatClock(s.ended_at) : '…'}`;
+      const tip = sleeping
+        ? `息屏 · ${span} · 不计时`
+        : `${s.app_name} · ${span} · ${formatMinutes(s.duration_minutes)}`;
+      return { left, width, color: sleeping ? 'rgba(140, 140, 155, 0.42)' : colorFor(s.app_name), tip };
     });
 
     const chips = Object.entries(summary)
@@ -485,7 +496,9 @@ onBeforeUnmount(() => {
       <div class="hero-main">
         <p class="hero-kicker">此刻<span class="hero-viewers"><b>{{ viewerShown ?? 0 }}</b> 人围观</span></p>
         <h2 class="hero-title" v-if="focus">
-          {{ focus.device_name }} <span class="accent">正在 {{ focus.app_name || '未知应用' }}</span>
+          {{ focus.device_name }}
+          <span class="accent" v-if="focus.screen_on === false">息屏中</span>
+          <span class="accent" v-else>正在 {{ focus.app_name || '未知应用' }}</span>
         </h2>
         <h2 class="hero-title" v-else>等待第一次上报…</h2>
         <p class="hero-status" v-if="loadError">{{ loadError }}</p>
@@ -503,6 +516,9 @@ onBeforeUnmount(() => {
           <span class="platform-icon" style="width: 28px; height: 28px; border-radius: 9px" v-html="platformIcon(focus.platform)"></span>
           {{ focus.device_name }}
           <span class="online-dot" style="margin: 0"><i :style="{ background: focus.online ? 'var(--green)' : '#c4b8c6' }"></i></span>
+        </div>
+        <div class="hero-battery" v-if="focusBattery !== null" :class="{ charging: focusCharging }">
+          {{ focusCharging ? '⚡ 充电中' : '🔋 电池' }} {{ focusBattery }}%
         </div>
         <div class="hero-updated mono">{{ focusUpdated }}</div>
       </div>
@@ -589,9 +605,9 @@ onBeforeUnmount(() => {
             <span
               v-if="Number.isFinite(Number(d.extra && d.extra.battery_percent))"
               class="battery"
-              :class="{ low: Number(d.extra.battery_percent) <= 20 }"
+              :class="{ low: Number(d.extra.battery_percent) <= 20, charging: Boolean(d.extra.battery_charging) }"
             >
-              <span>{{ d.extra.battery_charging ? '⚡' : '🔋' }} {{ d.extra.battery_percent }}%</span>
+              <span>{{ d.extra.battery_charging ? '⚡ 充电中' : '🔋' }} {{ d.extra.battery_percent }}%</span>
               <span class="battery-track"><i :style="{ width: Math.min(100, Math.max(0, Number(d.extra.battery_percent))) + '%' }"></i></span>
             </span>
             <span v-else></span>
@@ -669,7 +685,7 @@ onBeforeUnmount(() => {
         </template>
       </div>
       <div class="timeline-foot">
-        <span class="timeline-hint">— 每段颜色代表一个应用，悬停查看时长</span>
+        <span class="timeline-hint">— 每段颜色代表一个应用，灰色是息屏（不计入时长）</span>
         <span class="timeline-total mono" v-html="timelineTotal"></span>
       </div>
     </section>

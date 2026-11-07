@@ -117,6 +117,21 @@ function str(value, max = 256) {
   return String(value).trim().slice(0, max);
 }
 
+// MacroDroid 各版本魔变文本可能输出 true/false、1/0、开/关，统一解析成布尔值
+function boolish(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value !== 'string') return null;
+  const v = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on', '开', '亮', '屏幕开', '充电', '充电中', '已充电', 'ac', 'usb'].includes(v)) {
+    return true;
+  }
+  if (['0', 'false', 'no', 'off', '关', '灭', '屏幕关', '未充电', '放电中', 'discharging'].includes(v)) {
+    return false;
+  }
+  return null;
+}
+
 function safeEqual(a, b) {
   const left = Buffer.from(String(a));
   const right = Buffer.from(String(b));
@@ -234,15 +249,17 @@ function publicDevices() {
     const meta = state && state.app_id ? resolveAppMeta(state.app_id, device.platform, state.app_name) : null;
     const lastSeen = state ? state.last_seen_at : null;
     const online = lastSeen ? now - Date.parse(lastSeen) <= OFFLINE_MS : false;
+    const screenOn = state ? state.screen_on !== false : true;
     return {
       device_id: device.id,
       device_name: device.name,
       platform: device.platform,
       app_id: state ? state.app_id : '',
       app_name: meta ? meta.appName : '',
-      status_text: meta ? meta.statusText : '等待第一次上报…',
+      status_text: !screenOn ? '息屏中，这段时间不计时' : (meta ? meta.statusText : '等待第一次上报…'),
       display_title: meta && !meta.secret ? (state.display_title || '') : '',
       secret: meta ? meta.secret : false,
+      screen_on: screenOn,
       last_seen_at: lastSeen,
       online,
       extra: state ? state.extra : {},
@@ -251,20 +268,23 @@ function publicDevices() {
 }
 
 function publicRecent(limit = 20) {
-  return store.recentActivities(limit).map((a) => {
-    const meta = resolveAppMeta(a.app_id, a.platform, a.app_name);
-    return {
-      id: a.id,
-      device_id: a.device_id,
-      device_name: deviceName(a.device_id),
-      platform: a.platform,
-      app_id: a.app_id,
-      app_name: meta.appName,
-      status_text: meta.statusText,
-      display_title: meta.secret ? '' : (a.display_title || ''),
-      started_at: a.started_at,
-    };
-  });
+  // 息屏只是时间线边界，不算一条“应用动态”
+  return store.recentActivities(limit)
+    .filter((a) => a.screen_on !== false)
+    .map((a) => {
+      const meta = resolveAppMeta(a.app_id, a.platform, a.app_name);
+      return {
+        id: a.id,
+        device_id: a.device_id,
+        device_name: deviceName(a.device_id),
+        platform: a.platform,
+        app_id: a.app_id,
+        app_name: meta.appName,
+        status_text: meta.statusText,
+        display_title: meta.secret ? '' : (a.display_title || ''),
+        started_at: a.started_at,
+      };
+    });
 }
 
 function currentPayload() {
@@ -306,16 +326,20 @@ async function handleReport(req, res, url) {
     return;
   }
 
-  const appId = str(
+  const previous = store.state.devices[device.id] || null;
+  let appId = str(
     payload.app_id ?? payload.appId ?? payload.package ?? payload.app_package ?? payload.pkg,
     128
   );
-  if (!appId) {
-    json(res, 400, { error: 'app_id 不能为空' });
-    return;
-  }
-
   const appLabel = str(payload.app_label ?? payload.appLabel ?? payload.label ?? payload.app_name, 64);
+  if (!appId) {
+    // 只上报屏幕状态时沿用上一次的应用，手机端不用再读前台应用
+    appId = previous ? previous.app_id : '';
+    if (!appId) {
+      json(res, 400, { error: 'app_id 不能为空' });
+      return;
+    }
+  }
   const windowTitle = str(payload.window_title ?? payload.title, 256);
 
   // 时间戳仅用于展示，偏差超过 5 分钟就改用服务器时间
@@ -340,16 +364,29 @@ async function handleReport(req, res, url) {
   if (!extraSrc || typeof extraSrc !== 'object' || Array.isArray(extraSrc)) extraSrc = {};
 
   const extra = {};
+  const prevExtra = (previous && previous.extra) || {};
   const batteryRaw = Number(payload.battery_percent ?? payload.battery_level ?? payload.battery ?? extraSrc.battery_percent);
   if (Number.isFinite(batteryRaw)) {
     extra.battery_percent = Math.max(0, Math.min(100, Math.round(batteryRaw)));
+  } else if (prevExtra.battery_percent !== undefined) {
+    // 息屏/亮屏这类只带 screen_on 的上报，沿用上一次的电量
+    extra.battery_percent = prevExtra.battery_percent;
   }
-  const chargingRaw = payload.battery_charging ?? payload.charging ?? extraSrc.battery_charging;
-  if (typeof chargingRaw === 'boolean') {
-    extra.battery_charging = chargingRaw;
-  } else if (typeof chargingRaw === 'string') {
-    extra.battery_charging = /^(1|true|yes|on)$/i.test(chargingRaw);
+  const charging = boolish(payload.battery_charging ?? payload.charging ?? extraSrc.battery_charging);
+  if (charging !== null) {
+    extra.battery_charging = charging;
+  } else if (prevExtra.battery_charging !== undefined) {
+    extra.battery_charging = prevExtra.battery_charging;
   }
+
+  // 息屏上报：结束后台当前应用段，之后的时间不计入使用时长
+  let screenOn = boolish(
+    payload.screen_on ?? payload.screen ?? payload.screen_state ?? payload.screen_status ?? extraSrc.screen_on
+  );
+  if (screenOn === null && boolish(payload.screen_off) === true) screenOn = false;
+  // 没带屏幕状态时沿用上一次：桌面 agent 默认亮屏，手机定时上报也不会把息屏改回亮屏
+  if (screenOn === null) screenOn = previous ? previous.screen_on !== false : true;
+  extra.screen_on = screenOn;
   const music = extraSrc.music;
   if (music && typeof music === 'object' && !Array.isArray(music)) {
     const clean = {};
@@ -360,7 +397,12 @@ async function handleReport(req, res, url) {
     if (Object.keys(clean).length > 0) extra.music = clean;
   }
 
-  const meta = resolveAppMeta(appId, device.platform, appLabel, windowTitle);
+  const meta = resolveAppMeta(
+    appId,
+    device.platform,
+    appLabel || (previous && previous.app_id === appId ? previous.app_name : ''),
+    windowTitle
+  );
   store.report({
     device,
     appId: meta.effectiveAppId,
@@ -368,6 +410,7 @@ async function handleReport(req, res, url) {
     displayTitle: meta.displayTitle,
     startedAt,
     extra,
+    screenOn,
   });
 
   broadcast('update', {
@@ -415,19 +458,22 @@ function computeTimeline(url) {
   const result = store.timeline(startIso, endIso, deviceId || null);
 
   const segments = result.segments.map((s) => {
+    const screenOn = s.screen_on !== false;
     const meta = resolveAppMeta(s.app_id, s.platform, s.app_name);
     return {
       ...s,
-      app_name: meta.appName,
-      status_text: meta.statusText,
-      display_title: meta.secret ? '' : (s.display_title || ''),
+      app_name: screenOn ? meta.appName : '息屏',
+      status_text: screenOn ? meta.statusText : '息屏中，不计时',
+      display_title: screenOn && !meta.secret ? (s.display_title || '') : '',
+      screen_on: screenOn,
       device_name: deviceName(s.device_id),
     };
   });
 
-  // 用映射后的名字重新汇总，私密应用等改名才能反映到统计里
+  // 用映射后的名字重新汇总，私密应用等改名才能反映到统计里；息屏时段不计时长
   const summary = {};
   for (const s of segments) {
+    if (!s.screen_on) continue;
     if (!summary[s.device_id]) summary[s.device_id] = {};
     summary[s.device_id][s.app_name] = (summary[s.device_id][s.app_name] || 0) + s.duration_minutes;
   }

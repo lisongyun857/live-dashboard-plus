@@ -396,6 +396,25 @@ button, input {
   box-shadow: var(--shadow-soft);
 }
 
+.hero-battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card-solid);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.hero-battery.charging {
+  color: var(--green);
+  border-color: var(--green);
+}
+
 .hero-updated {
   margin-top: 10px;
   font-size: 12px;
@@ -543,6 +562,14 @@ button, input {
 
 .battery.low .battery-track i {
   background: linear-gradient(90deg, #ff8a5c, #ffb36b);
+}
+
+.battery.charging {
+  color: var(--green);
+}
+
+.battery.charging .battery-track i {
+  background: linear-gradient(90deg, #4fd18b, #a6f0c8);
 }
 
 .music {

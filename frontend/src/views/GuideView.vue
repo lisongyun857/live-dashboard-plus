@@ -15,7 +15,8 @@ const curlExample = computed(
 const macroBody = `{
   "app_id": "{app_package}",
   "app_label": "{app_name}",
-  "battery_percent": {battery}
+  "battery_percent": {battery},
+  "battery_charging": {power}
 }`;
 
 const agentCmd = `powershell -ExecutionPolicy Bypass -File agent\\pc-agent.ps1 -ServerUrl https://你的后端API域名 -Token 电脑令牌`;
@@ -160,7 +161,7 @@ onMounted(async () => {
         <span class="step-num">3</span>
         <div class="step-body">
           <h3>在 MacroDroid 新建宏</h3>
-          <p><b>触发器</b>：先加“应用启动/切换”（Application Launched / App Changed），把常用的应用勾上；再加一个“定时器”每 1 分钟触发一次，避免长时间停留时状态不刷新。</p>
+          <p><b>触发器</b>：加“应用启动/切换”（Application Launched / App Changed），把常用的应用勾上；再加一个“定时器”每 1 分钟触发一次，避免长时间停留时状态不刷新。</p>
           <p><b>动作</b>：添加“HTTP 请求”（HTTP Request），按下表填写：</p>
           <table class="field-table">
             <thead>
@@ -174,10 +175,12 @@ onMounted(async () => {
               <tr><td>请求体</td><td>见下方 JSON</td></tr>
             </tbody>
           </table>
-          <p>请求体里的 <span class="inline-code">{app_package}</span>、<span class="inline-code">{app_name}</span>、<span class="inline-code">{battery}</span> 都是 MacroDroid 的魔变文本，插入时会自动替换成实际值。不确定写法时，点输入框旁的「…」按钮，从列表里插入「前台应用名称 / 前台应用包名 / 电池电量」，宏会自动填对。</p>
+          <p>请求体里的占位符都是 MacroDroid 的魔变文本，插入时会自动替换成实际值。请点输入框旁的「…」按钮，从列表里插入「前台应用名称 / 前台应用包名 / 电池电量 / 充电状态（Power on/off）」，不要直接手打占位符（不同版本的名字可能不一样）。</p>
           <CodeBlock :code="macroBody" />
-          <p>如果某些机型没有 <span class="inline-code">{battery}</span>，把这一行删掉也能正常工作。想同时上报窗口标题，可以加 <span class="inline-code">"window_title": "{window_title}"</span>（聊天、银行等私密应用会自动隐藏标题）。</p>
+          <p><span class="inline-code">battery_percent</span> 和 <span class="inline-code">battery_charging</span> 会显示在面板的设备卡片上。如果某些机型没有对应魔变文本，把那一行删掉也能正常工作。</p>
+          <p>想同时上报窗口标题，可以加 <span class="inline-code">"window_title": "{window_title}"</span>（聊天、银行等私密应用会自动隐藏标题）。</p>
           <p>如果你的 MacroDroid 版本找不到自定义请求头，也可以把令牌放到 URL 后面：<span class="inline-code">/api/report?token=&lt;手机令牌&gt;</span>，效果一样。</p>
+          <p><b>息屏不计时</b>：再建两个小宏，触发器分别选「屏幕关闭」和「屏幕开启」，动作都是一个 HTTP 请求，请求体只写 <span class="inline-code">{"screen_on":false}</span> 和 <span class="inline-code">{"screen_on":true}</span>（URL、令牌同上）。服务端会自动沿用这台手机上一次的应用，不用再填 <span class="inline-code">app_id</span>；息屏期间的时间线会显示为灰色且不计入时长。</p>
         </div>
       </div>
 

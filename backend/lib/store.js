@@ -62,9 +62,10 @@ class Store {
   /**
    * 写入一次上报。同一设备 10 秒内重复上报同一应用只记一条活动，但状态总是刷新。
    */
-  report({ device, appId, appName, displayTitle, startedAt, extra }) {
+  report({ device, appId, appName, displayTitle, startedAt, extra, screenOn = true }) {
     const bucket = Math.floor(Date.now() / 10000);
-    const dedupeKey = `${device.id}|${appId}|${bucket}`;
+    // 屏幕开关也算一次边界，避免刚切应用就息屏时丢掉这一段的结束时间
+    const dedupeKey = `${device.id}|${appId}|${bucket}|${screenOn ? 1 : 0}`;
     let recorded = false;
 
     if (this.lastKeys.get(device.id) !== dedupeKey) {
@@ -77,6 +78,7 @@ class Store {
         app_name: appName,
         display_title: displayTitle || '',
         started_at: startedAt,
+        screen_on: screenOn !== false,
       });
       recorded = true;
       this.prune();
@@ -88,6 +90,7 @@ class Store {
       app_name: appName,
       display_title: displayTitle || '',
       last_seen_at: new Date().toISOString(),
+      screen_on: screenOn !== false,
       extra: extra || {},
     };
 
@@ -161,10 +164,13 @@ class Store {
     // 每个设备的下一条活动，用于计算持续时长
     const nextByDevice = new Map();
     const nextStarts = new Array(activities.length).fill(null);
+    const nextScreenOff = new Array(activities.length).fill(false);
     for (let i = activities.length - 1; i >= 0; i -= 1) {
       const a = activities[i];
-      nextStarts[i] = nextByDevice.get(a.device_id) ?? null;
-      nextByDevice.set(a.device_id, a.started_at);
+      const next = nextByDevice.get(a.device_id) || null;
+      nextStarts[i] = next ? next.started_at : null;
+      nextScreenOff[i] = Boolean(next && next.screen_on === false);
+      nextByDevice.set(a.device_id, a);
     }
 
     const GAP_THRESHOLD_MS = 2 * 60 * 1000;
@@ -175,12 +181,14 @@ class Store {
       const a = activities[i];
       const start = Date.parse(a.started_at);
       if (!Number.isFinite(start)) continue;
+      const screenOn = a.screen_on !== false;
 
       const next = nextStarts[i];
       let end = next ? Date.parse(next) : Math.min(now, endMs);
       let endedAt = next || (end > start ? new Date(end).toISOString() : null);
 
-      if (end - start > GAP_THRESHOLD_MS) {
+      // 下一条就是明确的息屏边界时，这段使用时长要完整计入；否则超长空档按 1 分钟估算
+      if (screenOn && !nextScreenOff[i] && end - start > GAP_THRESHOLD_MS) {
         end = start + 60 * 1000;
         endedAt = new Date(end).toISOString();
       }
@@ -192,7 +200,9 @@ class Store {
         display_title: a.display_title || '',
         started_at: a.started_at,
         ended_at: endedAt,
-        duration_minutes: Math.round((end - start) / 60000),
+        // 息屏时段只作为时间线里的一个灰条，不计入使用时长
+        duration_minutes: screenOn ? Math.round((end - start) / 60000) : 0,
+        screen_on: screenOn,
         device_id: a.device_id,
         platform: a.platform,
       });
@@ -200,6 +210,7 @@ class Store {
 
     const summary = {};
     for (const s of segments) {
+      if (!s.screen_on) continue;
       if (!summary[s.device_id]) summary[s.device_id] = {};
       summary[s.device_id][s.app_name] = (summary[s.device_id][s.app_name] || 0) + s.duration_minutes;
     }

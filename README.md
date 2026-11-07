@@ -59,6 +59,7 @@ frontend/dist/ 纯静态文件 ──上传──▶
 - [第五步 · 部署前端（另一个域名）+ HTTPS](#第五步--部署前端另一个域名--https)
 - [电脑接入（PC Agent）](#电脑接入pc-agent)
 - [手机接入（MacroDroid）](#手机接入macrodroid)
+- [手机端完整配置说明](docs/phone-setup.md)（3 个宏、后台权限、验证与排错）
 - [使用原理](#使用原理)
 - [配置文件说明](#配置文件说明)
 - [API 一览](#api-一览)
@@ -431,6 +432,8 @@ Invoke-RestMethod -Uri https://api.example.com/api/health
 
 手机无需安装额外 App，用 [MacroDroid](https://www.macrodroid.com/)（免费版够用）建一个宏。请求体模板已放在 [backend/agent/macrodroid-body.json](backend/agent/macrodroid-body.json)，直接复制粘贴即可。
 
+> 完整步骤、息屏上报、后台保活与排错见 [手机端配置说明](docs/phone-setup.md)。
+
 ### 固定配置一览（照这个套）
 
 | 项 | 值 |
@@ -449,12 +452,15 @@ Invoke-RestMethod -Uri https://api.example.com/api/health
   "app_id": "{app_package}",
   "app_label": "{app_name}",
   "battery_percent": {battery},
+  "battery_charging": {power},
   "window_title": "{window_title}"
 }
 ```
 
-- `{app_package}`、`{app_name}`、`{battery}`、`{window_title}` 都是 MacroDroid 魔变文本，插入时自动替换；不确定写法就点输入框旁的「…」从列表插入「前台应用名称 / 前台应用包名 / 电池电量」。
-- 有的机型没有 `{battery}` 或 `{window_title}`：把对应那一行整行删掉，其余照常工作。
+- 上面这些占位符都是 MacroDroid 魔变文本，插入时自动替换；不确定写法就点输入框旁的「…」从列表插入「前台应用名称 / 前台应用包名 / 电池电量 / 充电状态（Power on/off）」，不要手打占位符。
+- `battery_percent` 和 `battery_charging` 会显示在面板的设备卡片上。
+- 有的机型没有 `{battery}`、`{power}` 或 `{window_title}`：把对应那一行整行删掉，其余照常工作。
+- **息屏不计时**：再建两个小宏，触发器分别选「屏幕关闭」「屏幕开启」，动作都是一个 HTTP 请求，请求体只写 `{"screen_on":false}` / `{"screen_on":true}`（URL、令牌同上）。服务端会自动沿用这台手机上一次的应用，不用填 `app_id`；息屏期间时间线显示为灰色，且不计入使用时长。
 - 如果 MacroDroid 版本找不到自定义请求头，可以把令牌放到 URL 上，效果一样：`https://api.example.com/api/report?token=<手机令牌>`。
 - 聊天/邮件/银行类应用的窗口标题会被服务端自动过滤，不会落盘。
 
@@ -564,6 +570,7 @@ macKey = SHA256(base + 0x02)     ← HMAC-SHA256 验签密钥
 | `window_title` | 否 | 窗口标题（私密应用会被过滤） |
 | `battery_percent` | 否 | 电量 0-100 |
 | `battery_charging` | 否 | 是否充电 |
+| `screen_on` | 否 | 屏幕是否亮着；`false` 表示息屏，该时段不计入使用时长 |
 | `timestamp` | 否 | 上报时间（偏差超 5 分钟用服务器时间） |
 | `extra` | 否 | 任意附加 JSON 对象 |
 

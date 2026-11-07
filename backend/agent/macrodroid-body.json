@@ -2,5 +2,6 @@
   "app_id": "{app_package}",
   "app_label": "{app_name}",
   "battery_percent": {battery},
+  "battery_charging": {power},
   "window_title": "{window_title}"
 }
