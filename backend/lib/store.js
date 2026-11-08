@@ -4,12 +4,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const MAX_ACTIVITIES = 8000;
+const MAX_BATTERY_SAMPLES = 20000;
+// 电量变化不大时最多 5 分钟采一个点，避免每分钟上报把数据撑爆
+const BATTERY_SAMPLE_MS = 5 * 60 * 1000;
 
 class Store {
   constructor({ file, retentionDays }) {
     this.file = file;
     this.retentionDays = retentionDays;
-    this.state = { activities: [], devices: {}, nextId: 1 };
+    this.state = { activities: [], devices: {}, battery: [], nextId: 1 };
     this.lastKeys = new Map();
     this.saveTimer = null;
     this.load();
@@ -22,6 +25,7 @@ class Store {
       this.state = {
         activities: Array.isArray(raw.activities) ? raw.activities : [],
         devices: raw.devices && typeof raw.devices === 'object' ? raw.devices : {},
+        battery: Array.isArray(raw.battery) ? raw.battery : [],
         nextId: Number(raw.nextId) || 1,
       };
     } catch (err) {
@@ -57,6 +61,48 @@ class Store {
     if (this.state.activities.length > MAX_ACTIVITIES) {
       this.state.activities = this.state.activities.slice(-MAX_ACTIVITIES);
     }
+    this.state.battery = this.state.battery.filter((s) => {
+      const t = Date.parse(s.at);
+      return Number.isFinite(t) && t >= cutoff;
+    });
+    if (this.state.battery.length > MAX_BATTERY_SAMPLES) {
+      this.state.battery = this.state.battery.slice(-MAX_BATTERY_SAMPLES);
+    }
+  }
+
+  /** 记录电量采样：值或充电状态变化时立刻记，否则最多 5 分钟一个点。 */
+  recordBattery(deviceId, percent, charging, atIso) {
+    if (!Number.isFinite(percent)) return;
+    const at = atIso || new Date().toISOString();
+    const list = this.state.battery;
+    let last = null;
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i].device_id === deviceId) {
+        last = list[i];
+        break;
+      }
+    }
+    const lastCharging = last ? last.charging : undefined;
+    const changed = !last || last.percent !== percent || (lastCharging === null ? undefined : lastCharging) !== charging;
+    const elapsed = last ? Date.parse(at) - Date.parse(last.at) : Infinity;
+    if (!changed && Number.isFinite(elapsed) && elapsed < BATTERY_SAMPLE_MS) return;
+    list.push({
+      device_id: deviceId,
+      at,
+      percent,
+      charging: charging === true || charging === false ? charging : null,
+    });
+  }
+
+  batterySamples(startMs, endMs, deviceId) {
+    return this.state.battery
+      .filter((s) => {
+        if (deviceId && s.device_id !== deviceId) return false;
+        const t = Date.parse(s.at);
+        return Number.isFinite(t) && t >= startMs && t < endMs;
+      })
+      .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+      .map((s) => ({ ...s }));
   }
 
   /**
@@ -94,6 +140,10 @@ class Store {
       extra: extra || {},
     };
 
+    if (extra && extra.battery_percent !== undefined) {
+      this.recordBattery(device.id, extra.battery_percent, extra.battery_charging);
+    }
+
     this.scheduleSave();
     return { recorded };
   }
@@ -113,6 +163,7 @@ class Store {
 
   clearDevice(deviceId) {
     this.state.activities = this.state.activities.filter((a) => a.device_id !== deviceId);
+    this.state.battery = this.state.battery.filter((s) => s.device_id !== deviceId);
     delete this.state.devices[deviceId];
     this.scheduleSave();
   }
@@ -120,6 +171,7 @@ class Store {
   clearAll() {
     this.state.activities = [];
     this.state.devices = {};
+    this.state.battery = [];
     this.lastKeys.clear();
     this.scheduleSave();
   }

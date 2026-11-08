@@ -13,6 +13,19 @@ const DATA_DIR = path.resolve(PROJECT_ROOT, process.env.DATA_DIR || 'data');
 const PLATFORMS = ['windows', 'android', 'macos', 'linux', 'ios'];
 const DEFAULT_SITE = { name: '我的视监面板', description: '此刻我正在做什么' };
 
+// AI 总结默认配置：接口协议 + 自填 API 地址/模型/Key，全部在管理面板里配置
+const DEFAULT_AI = {
+  enabled: false,
+  protocol: 'openai',
+  api_key: '',
+  base_url: '',
+  model: '',
+  temperature: 0.4,
+  max_tokens: 600,
+  cache_minutes: 30,
+};
+const AI_PROTOCOLS = ['openai', 'ollama', 'anthropic', 'gemini'];
+
 function randomToken() {
   return crypto.randomBytes(16).toString('hex');
 }
@@ -25,6 +38,7 @@ function defaultConfig() {
     retention_days: 7,
     admin_password: '', // 启动时生成 scrypt 哈希，明文只在日志里打印一次
     https: { enabled: false, cert: '', key: '' },
+    ai: { ...DEFAULT_AI },
     devices: [
       { id: 'my-pc', name: '我的电脑', platform: 'windows', token: randomToken(), allow_commands: false },
       { id: 'my-phone', name: '我的手机', platform: 'android', token: randomToken(), allow_commands: false },
@@ -46,6 +60,11 @@ function normalizeDevice(raw, index) {
   return { id, name, platform, token, allow_commands: Boolean(raw.allow_commands) };
 }
 
+function clamp(value, min, max, fallback) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
 function normalize(raw) {
   const cfg = { ...defaultConfig(), ...raw };
   cfg.site = { ...DEFAULT_SITE, ...(raw && raw.site) };
@@ -58,6 +77,19 @@ function normalize(raw) {
     enabled: Boolean(httpsRaw.enabled),
     cert: String(httpsRaw.cert || '').trim(),
     key: String(httpsRaw.key || '').trim(),
+  };
+
+  const aiRaw = (raw && raw.ai) || {};
+  const protocol = String(aiRaw.protocol || DEFAULT_AI.protocol).trim();
+  cfg.ai = {
+    enabled: Boolean(aiRaw.enabled),
+    protocol: AI_PROTOCOLS.includes(protocol) ? protocol : DEFAULT_AI.protocol,
+    api_key: String(aiRaw.api_key || '').trim(),
+    base_url: String(aiRaw.base_url || '').trim(),
+    model: String(aiRaw.model || '').trim(),
+    temperature: clamp(Number(aiRaw.temperature), 0, 2, DEFAULT_AI.temperature),
+    max_tokens: Math.round(clamp(Number(aiRaw.max_tokens), 50, 4000, DEFAULT_AI.max_tokens)),
+    cache_minutes: Math.round(clamp(Number(aiRaw.cache_minutes), 0, 1440, DEFAULT_AI.cache_minutes)),
   };
 
   const devices = (Array.isArray(raw && raw.devices) ? raw.devices : [])

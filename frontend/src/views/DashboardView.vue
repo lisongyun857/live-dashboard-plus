@@ -13,6 +13,10 @@ const loadError = ref('');
 const loadingTimeline = ref(false);
 const notifyOn = ref(false);
 const screenshots = ref([]);
+const stats = ref(null);
+const heatmap = ref(null);
+const aiSummary = ref(null);
+const aiLoading = ref(false);
 const myCommand = ref(null);
 const commandBusy = ref(false);
 const commandDeviceId = ref('');
@@ -115,6 +119,117 @@ const timelineTotal = computed(() => {
   if (!timelineRows.value || !timelineRows.value.hasData) return '';
   return `这天共记录 ${formatMinutes(timelineRows.value.totalMinutes)}`;
 });
+
+// ── 统计卡片：电量曲线 / 应用排行 / 热力图 / AI 总结 ───────────────────
+const statsQuery = computed(() => {
+  const tz = new Date().getTimezoneOffset();
+  const device = selectedDevice.value === 'all' ? '' : `&device_id=${encodeURIComponent(selectedDevice.value)}`;
+  return `date=${selectedDate.value}&tz=${tz}${device}`;
+});
+
+const ranking = computed(() => (stats.value && stats.value.ranking ? stats.value.ranking.slice(0, 8) : []));
+const rankingMax = computed(() => Math.max(1, ...ranking.value.map((item) => item.minutes)));
+
+const batteryChart = computed(() => {
+  const b = stats.value ? stats.value.battery : null;
+  if (!b || !b.samples || !b.samples.length) return null;
+  const [y, m, d] = selectedDate.value.split('-').map(Number);
+  const dayStart = new Date(y, m - 1, d).getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const points = b.samples.map((s) => {
+    const t = Date.parse(s.t);
+    const x = Math.max(0, Math.min(100, ((t - dayStart) / dayMs) * 100));
+    const yPos = 100 - Math.max(0, Math.min(100, Number(s.percent)));
+    return `${x.toFixed(1)},${yPos.toFixed(1)}`;
+  });
+  // 只有一个采样点时画不出线，复制一个让它可见
+  if (points.length === 1) points.push(points[0]);
+
+  const charging = (b.charging || []).map((seg) => {
+    const start = Math.max(dayStart, Date.parse(seg.started_at));
+    const end = Math.min(dayStart + dayMs, seg.ended_at ? Date.parse(seg.ended_at) : Date.now());
+    const left = Math.max(0, Math.min(100, ((start - dayStart) / dayMs) * 100));
+    const width = Math.max(0.5, Math.min(100 - left, ((end - start) / dayMs) * 100));
+    return { left, width };
+  });
+
+  return {
+    points: points.join(' '),
+    charging,
+    deviceName: b.device_name,
+    min: b.min_percent,
+    max: b.max_percent,
+    start: b.start_percent,
+    end: b.end_percent,
+    chargingMinutes: b.charging_minutes,
+  };
+});
+
+function heatLevel(minutes) {
+  if (!minutes) return 0;
+  if (minutes < 30) return 1;
+  if (minutes < 90) return 2;
+  if (minutes < 180) return 3;
+  return 4;
+}
+
+const heatmapCells = computed(() => {
+  const items = heatmap.value && Array.isArray(heatmap.value.items) ? heatmap.value.items : [];
+  if (!items.length) return [];
+  const first = new Date(`${items[0].date}T00:00:00`);
+  const pad = Number.isNaN(first.getTime()) ? 0 : first.getDay();
+  const cells = [];
+  for (let i = 0; i < pad; i += 1) cells.push({ key: `pad-${i}`, empty: true });
+  for (const item of items) {
+    cells.push({
+      key: item.date,
+      empty: false,
+      level: heatLevel(item.minutes),
+      label: `${item.date} · ${formatMinutes(item.minutes)}`,
+    });
+  }
+  return cells;
+});
+
+const heatmapTotal = computed(() => (heatmap.value ? formatMinutes(heatmap.value.total_minutes) : ''));
+
+const aiEnabled = computed(() => Boolean(aiSummary.value && aiSummary.value.enabled));
+const aiError = computed(() => (aiSummary.value && aiSummary.value.error ? aiSummary.value.error : ''));
+const aiLines = computed(() => {
+  const text = aiSummary.value && aiSummary.value.summary ? aiSummary.value.summary : '';
+  return text
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-*•]\s*/, '').trim())
+    .filter(Boolean);
+});
+
+async function refreshStats() {
+  try {
+    const tz = new Date().getTimezoneOffset();
+    const device = selectedDevice.value === 'all' ? '' : `&device_id=${encodeURIComponent(selectedDevice.value)}`;
+    const [s, h] = await Promise.all([
+      api(`/api/stats?${statsQuery.value}`),
+      api(`/api/heatmap?date=${todayString.value}&days=90&tz=${tz}${device}`),
+    ]);
+    stats.value = s;
+    heatmap.value = h;
+  } catch (err) {
+    console.warn('加载统计失败', err);
+  }
+}
+
+async function refreshAi(force = false) {
+  if (aiLoading.value) return;
+  aiLoading.value = true;
+  try {
+    const extra = force ? '&force=1' : '';
+    aiSummary.value = await api(`/api/ai/summary?${statsQuery.value}${extra}`);
+  } catch (err) {
+    aiSummary.value = { enabled: true, summary: '', error: String(err.message || err) };
+  } finally {
+    aiLoading.value = false;
+  }
+}
 
 function lastSeenText(d) {
   if (!d.last_seen_at) return '还没有上报';
@@ -408,17 +523,25 @@ onMounted(async () => {
   } catch (err) {
     loadError.value = String(err.message || err);
   }
-  await Promise.all([refreshCurrent(), refreshTimeline(), refreshScreenshots()]);
+  await Promise.all([refreshCurrent(), refreshTimeline(), refreshScreenshots(), refreshStats()]);
+  refreshAi();
   syncQuery();
   connectStream();
   pollTimer = setInterval(() => {
     refreshCurrent();
     refreshScreenshots();
-    if (selectedDate.value === localDateString(new Date())) refreshTimeline();
+    if (selectedDate.value === localDateString(new Date())) {
+      refreshTimeline();
+      refreshStats();
+    }
   }, 20000);
 });
 
-watch([selectedDevice, selectedDate], syncQuery);
+watch([selectedDevice, selectedDate], () => {
+  syncQuery();
+  refreshStats();
+  refreshAi();
+});
 
 watch(
   commandDevices,
@@ -687,6 +810,103 @@ onBeforeUnmount(() => {
       <div class="timeline-foot">
         <span class="timeline-hint">— 每段颜色代表一个应用，灰色是息屏（不计入时长）</span>
         <span class="timeline-total mono" v-html="timelineTotal"></span>
+      </div>
+    </section>
+
+    <section class="card ai-card" v-if="aiEnabled">
+      <div class="section-head">
+        <h2>AI 总结</h2>
+        <span class="section-note">
+          {{ aiSummary.model || aiSummary.protocol || '' }}<template v-if="aiSummary.cached"> · 缓存</template>
+        </span>
+        <button class="admin-btn small" type="button" :disabled="aiLoading" @click="refreshAi(true)">
+          {{ aiLoading ? '生成中…' : '重新生成' }}
+        </button>
+      </div>
+      <p class="admin-muted" v-if="aiLoading">AI 正在阅读这一天的时间线…</p>
+      <div class="ai-body" v-else-if="aiLines.length">
+        <p v-for="(line, i) in aiLines" :key="i">{{ line }}</p>
+      </div>
+      <p class="empty" v-else>{{ aiError || '暂时还没有总结，点右上角重新生成。' }}</p>
+    </section>
+
+    <div class="insight-grid">
+      <section class="card battery-card">
+        <div class="section-head">
+          <h2>电量曲线</h2>
+          <span class="section-note" v-if="batteryChart">
+            {{ batteryChart.deviceName }} · 最低 {{ batteryChart.min }}% · 最高 {{ batteryChart.max }}%
+          </span>
+        </div>
+        <template v-if="batteryChart">
+          <div class="battery-chart">
+            <svg class="battery-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <rect
+                v-for="(seg, i) in batteryChart.charging"
+                :key="i"
+                :x="seg.left"
+                y="0"
+                :width="seg.width"
+                height="100"
+                class="charge-band"
+              ></rect>
+              <polyline :points="batteryChart.points" class="battery-line" vector-effect="non-scaling-stroke"></polyline>
+            </svg>
+          </div>
+          <div class="timeline-axis"><span>0:00</span><span>6:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+          <div class="chart-legend">
+            <span><i class="legend-line"></i>电量</span>
+            <span><i class="legend-band"></i>充电区间 {{ batteryChart.chargingMinutes ? formatMinutes(batteryChart.chargingMinutes) : '' }}</span>
+            <span>开始 {{ batteryChart.start }}% → 结束 {{ batteryChart.end }}%</span>
+          </div>
+        </template>
+        <p class="empty" v-else>还没有电量采样，等设备再上报一次电量就会出现曲线。</p>
+      </section>
+
+      <section class="card rank-card">
+        <div class="section-head">
+          <h2>应用时长排行</h2>
+          <span class="section-note">{{ stats ? formatMinutes(stats.total_minutes) : '' }}</span>
+        </div>
+        <ol class="rank-list" v-if="ranking.length">
+          <li class="rank-row" v-for="(item, i) in ranking" :key="item.app_name">
+            <span class="rank-index">{{ i + 1 }}</span>
+            <span class="rank-name" :title="item.app_name">{{ item.app_name }}</span>
+            <span class="rank-bar">
+              <i :style="{ width: (item.minutes / rankingMax) * 100 + '%', background: colorFor(item.app_name) }"></i>
+            </span>
+            <span class="rank-value">{{ formatMinutes(item.minutes) }}<em>{{ item.share }}%</em></span>
+          </li>
+        </ol>
+        <p class="empty" v-else>这一天还没有使用记录。</p>
+      </section>
+    </div>
+
+    <section class="card heatmap-card">
+      <div class="section-head">
+        <h2>使用热力图</h2>
+        <span class="section-note">近 90 天 · 累计 {{ heatmapTotal }} · 活跃 {{ heatmap ? heatmap.active_days : 0 }} 天</span>
+      </div>
+      <div class="heatmap-wrap" v-if="heatmapCells.length">
+        <div class="heatmap">
+          <span
+            v-for="cell in heatmapCells"
+            :key="cell.key"
+            class="heat-cell"
+            :class="cell.empty ? 'is-empty' : `lvl-${cell.level}`"
+            :title="cell.empty ? '' : cell.label"
+          ></span>
+        </div>
+      </div>
+      <p class="empty" v-else>暂无数据</p>
+      <div class="heatmap-legend">
+        <span>少</span>
+        <i class="heat-cell lvl-0"></i>
+        <i class="heat-cell lvl-1"></i>
+        <i class="heat-cell lvl-2"></i>
+        <i class="heat-cell lvl-3"></i>
+        <i class="heat-cell lvl-4"></i>
+        <span>多</span>
       </div>
     </section>
 

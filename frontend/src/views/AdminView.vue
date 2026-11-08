@@ -66,6 +66,59 @@ const statLine = ref('');
 const dataStats = ref('');
 const deviceList = ref([]);
 
+// ── AI 总结设置 ────────────────────────────────────────────────────────
+const aiForm = ref({
+  enabled: false,
+  protocol: 'openai',
+  api_key: '',
+  base_url: '',
+  model: '',
+  temperature: 0.4,
+  max_tokens: 600,
+  cache_minutes: 30,
+});
+const aiProtocols = ref([]);
+const aiTesting = ref(false);
+
+const aiHint = computed(() => {
+  const item = aiProtocols.value.find((p) => p.key === aiForm.value.protocol);
+  return item ? item.hint : '';
+});
+
+async function saveAi() {
+  try {
+    await adminApi('/api/admin/ai', {
+      method: 'POST',
+      body: JSON.stringify({ ai: aiForm.value }),
+    });
+    setMsg('ai', '已保存，仪表盘会立即生效', true);
+    loadOverview();
+  } catch (err) {
+    setMsg('ai', err.message, false);
+  }
+}
+
+async function testAi() {
+  if (aiTesting.value) return;
+  aiTesting.value = true;
+  setMsg('ai', '正在连接模型…', true);
+  try {
+    const data = await adminApi('/api/admin/ai/test', {
+      method: 'POST',
+      body: JSON.stringify({ ai: aiForm.value }),
+    });
+    if (data.ok) {
+      setMsg('ai', `连接正常（${data.latency_ms} ms）：${data.reply || '已返回内容'}`, true);
+    } else {
+      setMsg('ai', `连接失败：${data.error}`, false);
+    }
+  } catch (err) {
+    setMsg('ai', err.message, false);
+  } finally {
+    aiTesting.value = false;
+  }
+}
+
 async function loadOverview() {
   try {
     const data = await adminApi('/api/admin/overview');
@@ -80,6 +133,8 @@ async function loadOverview() {
       `共 ${stats.activity_count} 条记录，数据文件约 ${stats.file_kb} KB` +
       (stats.oldest_at ? `，最早记录 ${new Date(stats.oldest_at).toLocaleString()}` : '');
     deviceList.value = data.devices;
+    aiProtocols.value = data.ai_protocols || [];
+    if (data.ai) aiForm.value = { ...data.ai };
   } catch (err) {
     setMsg('settings', err.message, false);
   }
@@ -353,6 +408,58 @@ onMounted(() => {
               </div>
             </details>
           </div>
+        </div>
+      </section>
+
+      <section class="card admin-card">
+        <div class="section-head">
+          <h2>AI 总结</h2>
+          <span class="section-note">API 地址自己填，选择兼容的接口协议即可，支持主流兼容接口</span>
+        </div>
+        <div class="ai-form">
+          <label class="field">
+            <span>启用 AI 总结</span>
+            <select class="admin-select" v-model="aiForm.enabled">
+              <option :value="false">关闭</option>
+              <option :value="true">开启</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>接口协议（兼容类型）</span>
+            <select class="admin-select" v-model="aiForm.protocol">
+              <option v-for="p in aiProtocols" :key="p.key" :value="p.key">{{ p.label }}</option>
+            </select>
+          </label>
+          <label class="field field-wide">
+            <span>API 地址（Base URL）</span>
+            <input class="admin-input" v-model="aiForm.base_url" placeholder="例如 https://api.deepseek.com/v1" />
+          </label>
+          <label class="field">
+            <span>模型名称</span>
+            <input class="admin-input" v-model="aiForm.model" placeholder="例如 deepseek-chat" />
+          </label>
+          <label class="field">
+            <span>API Key</span>
+            <input class="admin-input" v-model="aiForm.api_key" type="password" placeholder="本地 Ollama 可留空" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>温度（0–2）</span>
+            <input class="admin-input" v-model.number="aiForm.temperature" type="number" step="0.1" min="0" max="2" />
+          </label>
+          <label class="field">
+            <span>最大输出 tokens</span>
+            <input class="admin-input" v-model.number="aiForm.max_tokens" type="number" min="50" max="4000" />
+          </label>
+          <label class="field">
+            <span>结果缓存（分钟，0 不缓存）</span>
+            <input class="admin-input" v-model.number="aiForm.cache_minutes" type="number" min="0" max="1440" />
+          </label>
+          <p class="ai-hint" v-if="aiHint">{{ aiHint }}</p>
+        </div>
+        <div class="admin-actions">
+          <button class="admin-btn primary" type="button" @click="saveAi">保存 AI 设置</button>
+          <button class="admin-btn" type="button" :disabled="aiTesting" @click="testAi">{{ aiTesting ? '测试中…' : '测试连接' }}</button>
+          <span class="admin-msg" :class="{ ok: msgs.ai && msgs.ai.ok, bad: msgs.ai && !msgs.ai.ok }">{{ msgs.ai ? msgs.ai.text : '' }}</span>
         </div>
       </section>
 

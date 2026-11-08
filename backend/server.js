@@ -12,6 +12,8 @@ const { hashPassword, verifyPassword } = require('./lib/password');
 const { Store } = require('./lib/store');
 const { CommandQueue, MAX_IMAGE_BYTES } = require('./lib/commands');
 const { resolveAppMeta } = require('./lib/app-mapper');
+const { DAY_MS, dayWindow, batterySummary, heatmap } = require('./lib/stats');
+const { providerList, generate, buildPrompt } = require('./lib/ai');
 
 const config = loadConfig();
 const store = new Store({
@@ -130,6 +132,11 @@ function boolish(value) {
     return false;
   }
   return null;
+}
+
+function clampNumber(value, min, max, fallback) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
 }
 
 function safeEqual(a, b) {
@@ -431,36 +438,15 @@ async function handleReport(req, res, url) {
 }
 
 // 按日期 / 时区 / 设备计算时间线，供 /api/timeline 与 /api/export 复用
-function computeTimeline(url) {
-  const date = url.searchParams.get('date') || '';
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-  if (!match) return { error: 'date 参数格式应为 YYYY-MM-DD' };
+function tzParam(url) {
+  const raw = url.searchParams.get('tz');
+  if (raw === null) return new Date().getTimezoneOffset();
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : NaN;
+}
 
-  const tzRaw = url.searchParams.get('tz');
-  const tz = tzRaw === null ? new Date().getTimezoneOffset() : Number(tzRaw);
-  if (!Number.isFinite(tz) || tz < -840 || tz > 840) return { error: 'tz 参数无效' };
-
-  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  const startMs = Date.UTC(year, month - 1, day) + tz * 60000;
-  const probe = new Date(startMs - tz * 60000);
-  if (
-    Number.isNaN(startMs) ||
-    probe.getUTCFullYear() !== year ||
-    probe.getUTCMonth() !== month - 1 ||
-    probe.getUTCDate() !== day
-  ) {
-    return { error: '日期不存在' };
-  }
-
-  const deviceId = url.searchParams.get('device_id');
-  if (deviceId && !config.devices.some((d) => d.id === deviceId)) {
-    return { payload: { date, timezone_offset: tz, segments: [], summary: {} } };
-  }
-
-  const startIso = new Date(startMs).toISOString();
-  const endIso = new Date(startMs + 24 * 60 * 60 * 1000).toISOString();
-  const result = store.timeline(startIso, endIso, deviceId || null);
-
+function daySegments(startMs, endMs, deviceId) {
+  const result = store.timeline(new Date(startMs).toISOString(), new Date(endMs).toISOString(), deviceId || null);
   const segments = result.segments.map((s) => {
     const screenOn = s.screen_on !== false;
     const meta = resolveAppMeta(s.app_id, s.platform, s.app_name);
@@ -482,7 +468,194 @@ function computeTimeline(url) {
     summary[s.device_id][s.app_name] = (summary[s.device_id][s.app_name] || 0) + s.duration_minutes;
   }
 
-  return { payload: { date, timezone_offset: tz, segments, summary } };
+  return { segments, summary };
+}
+
+function computeTimeline(url) {
+  const deviceId = url.searchParams.get('device_id');
+  const win = dayWindow(url.searchParams.get('date') || '', tzParam(url));
+  if (win.error) return { error: win.error };
+
+  if (deviceId && !config.devices.some((d) => d.id === deviceId)) {
+    return { payload: { date: win.date, timezone_offset: win.tz, segments: [], summary: {} } };
+  }
+
+  const { segments, summary } = daySegments(win.startMs, win.endMs, deviceId || '');
+  return { payload: { date: win.date, timezone_offset: win.tz, segments, summary } };
+}
+
+/** 某一天的使用排行、息屏与电量汇总，供 /api/stats 和 AI 总结共用 */
+function buildStats(deviceId, win) {
+  const { segments, summary } = daySegments(win.startMs, win.endMs, deviceId || '');
+
+  let totalMinutes = 0;
+  for (const apps of Object.values(summary)) {
+    for (const minutes of Object.values(apps)) totalMinutes += minutes;
+  }
+
+  let sleepMinutes = 0;
+  const rankingMap = new Map();
+  for (const s of segments) {
+    if (s.screen_on === false) {
+      const start = Date.parse(s.started_at);
+      const end = s.ended_at ? Date.parse(s.ended_at) : start;
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        sleepMinutes += Math.round((end - start) / 60000);
+      }
+      continue;
+    }
+    rankingMap.set(s.app_name, (rankingMap.get(s.app_name) || 0) + s.duration_minutes);
+  }
+
+  const rankings = [...rankingMap.entries()]
+    .filter(([, minutes]) => minutes > 0)
+    .map(([name, minutes]) => ({
+      app_name: name,
+      minutes,
+      share: totalMinutes > 0 ? Math.round((minutes / totalMinutes) * 100) : 0,
+    }))
+    .sort((a, b) => b.minutes - a.minutes);
+
+  // 没指定设备时，电量曲线挑这一天采样最多的那台设备
+  let batteryDeviceId = deviceId || '';
+  if (!batteryDeviceId) {
+    let bestCount = -1;
+    for (const d of config.devices) {
+      const count = store.batterySamples(win.startMs, win.endMs, d.id).length;
+      if (count > bestCount) {
+        bestCount = count;
+        batteryDeviceId = d.id;
+      }
+    }
+    if (bestCount <= 0) batteryDeviceId = '';
+  }
+  const battery = batteryDeviceId
+    ? {
+        device_id: batteryDeviceId,
+        device_name: deviceName(batteryDeviceId),
+        ...batterySummary(store.batterySamples(win.startMs, win.endMs, batteryDeviceId), win.startMs, win.endMs),
+      }
+    : null;
+
+  return {
+    date: win.date,
+    timezone_offset: win.tz,
+    device_id: deviceId || '',
+    device_name: deviceId ? deviceName(deviceId) : '全部设备',
+    total_minutes: totalMinutes,
+    app_count: rankings.length,
+    sleep_minutes: sleepMinutes,
+    charging_minutes: battery ? battery.charging_minutes : 0,
+    ranking: rankings,
+    battery,
+  };
+}
+
+function handleStats(res, url) {
+  const deviceId = url.searchParams.get('device_id') || '';
+  if (deviceId && !config.devices.some((d) => d.id === deviceId)) {
+    json(res, 404, { error: '设备不存在' });
+    return;
+  }
+  const win = dayWindow(url.searchParams.get('date') || '', tzParam(url));
+  if (win.error) {
+    json(res, 400, { error: win.error });
+    return;
+  }
+  json(res, 200, buildStats(deviceId, win));
+}
+
+function handleHeatmap(res, url) {
+  const rawDays = Number(url.searchParams.get('days'));
+  const days = Number.isFinite(rawDays) ? Math.min(365, Math.max(7, Math.round(rawDays))) : 90;
+  const deviceId = url.searchParams.get('device_id') || '';
+  if (deviceId && !config.devices.some((d) => d.id === deviceId)) {
+    json(res, 404, { error: '设备不存在' });
+    return;
+  }
+  const win = dayWindow(url.searchParams.get('date') || '', tzParam(url));
+  if (win.error) {
+    json(res, 400, { error: win.error });
+    return;
+  }
+  const list = heatmap(store, { dayStart: win.startMs, tz: win.tz, days, deviceId });
+  let total = 0;
+  let activeDays = 0;
+  for (const item of list) {
+    total += item.minutes;
+    if (item.minutes > 0) activeDays += 1;
+  }
+  json(res, 200, {
+    end_date: win.date,
+    days,
+    total_minutes: total,
+    active_days: activeDays,
+    items: list,
+  });
+}
+
+// AI 总结：按「设备 + 日期 + 模型」缓存，避免每次刷新都花钱
+const aiCache = new Map();
+
+async function handleAiSummary(res, url) {
+  if (!config.ai.enabled) {
+    json(res, 200, { enabled: false, summary: '', error: 'AI 总结未开启，可在管理面板开启' });
+    return;
+  }
+  const deviceId = url.searchParams.get('device_id') || '';
+  if (deviceId && !config.devices.some((d) => d.id === deviceId)) {
+    json(res, 404, { error: '设备不存在' });
+    return;
+  }
+  const win = dayWindow(url.searchParams.get('date') || '', tzParam(url));
+  if (win.error) {
+    json(res, 400, { error: win.error });
+    return;
+  }
+
+  const force = url.searchParams.get('force') === '1';
+  const cacheKey = `${deviceId || 'all'}|${win.date}|${config.ai.provider}|${config.ai.model}`;
+  const ttl = config.ai.cache_minutes * 60 * 1000;
+  const cached = aiCache.get(cacheKey);
+  if (!force && ttl > 0 && cached && Date.now() - cached.at < ttl) {
+    json(res, 200, { enabled: true, summary: cached.text, ...cached.meta, cached: true });
+    return;
+  }
+
+  const stats = buildStats(deviceId, win);
+  if (!stats.ranking.length) {
+    json(res, 200, {
+      enabled: true,
+      summary: '',
+      provider: config.ai.provider,
+      model: config.ai.model,
+      date: win.date,
+      error: '这一天还没有使用记录',
+    });
+    return;
+  }
+
+  try {
+    const text = (await generate({ ai: config.ai, prompt: buildPrompt(stats) })).trim();
+    if (!text) throw new Error('模型返回了空内容');
+    const meta = {
+      provider: config.ai.provider,
+      model: config.ai.model || '',
+      date: win.date,
+      generated_at: new Date().toISOString(),
+    };
+    if (ttl > 0) aiCache.set(cacheKey, { text, at: Date.now(), meta });
+    json(res, 200, { enabled: true, summary: text, ...meta, cached: false });
+  } catch (err) {
+    json(res, 200, {
+      enabled: true,
+      summary: '',
+      provider: config.ai.provider,
+      model: config.ai.model || '',
+      date: win.date,
+      error: `生成失败：${err.message}`,
+    });
+  }
 }
 
 function handleTimeline(res, url) {
@@ -849,6 +1022,8 @@ async function handleAdminApi(req, res, url) {
       offline_after_seconds: config.offline_after_seconds,
       retention_days: config.retention_days,
       https: config.https,
+      ai: { ...config.ai },
+      ai_protocols: protocolList(),
       devices: config.devices.map((d) => ({ ...d })),
       stats: store.stats(),
       uptime_seconds: Math.round(process.uptime()),
@@ -991,6 +1166,57 @@ async function handleAdminApi(req, res, url) {
     return;
   }
 
+  if (pathname === '/api/admin/ai' && req.method === 'POST') {
+    let body;
+    try {
+      body = parseBody(await readBody(req));
+    } catch {
+      json(res, 400, { error: '读取请求失败' });
+      return;
+    }
+    const aiRaw = body.ai && typeof body.ai === 'object' && !Array.isArray(body.ai) ? body.ai : body;
+    const protocol = str(aiRaw.protocol, 16) || config.ai.protocol;
+    if (!protocolList().some((p) => p.key === protocol)) {
+      json(res, 400, { error: '不支持的接口协议' });
+      return;
+    }
+    config.ai = {
+      enabled: Boolean(aiRaw.enabled),
+      protocol,
+      // API Key 允许留空（本地 Ollama 不需要），其余字段原样保存
+      api_key: typeof aiRaw.api_key === 'string' ? aiRaw.api_key.trim() : config.ai.api_key,
+      base_url: str(aiRaw.base_url, 256),
+      model: str(aiRaw.model, 128),
+      temperature: clampNumber(Number(aiRaw.temperature), 0, 2, config.ai.temperature),
+      max_tokens: Math.round(clampNumber(Number(aiRaw.max_tokens), 50, 4000, config.ai.max_tokens)),
+      cache_minutes: Math.round(clampNumber(Number(aiRaw.cache_minutes), 0, 1440, config.ai.cache_minutes)),
+    };
+    saveConfig(config);
+    aiCache.clear();
+    json(res, 200, { ok: true, ai: config.ai });
+    return;
+  }
+
+  if (pathname === '/api/admin/ai/test' && req.method === 'POST') {
+    let body;
+    try {
+      body = parseBody(await readBody(req));
+    } catch {
+      json(res, 400, { error: '读取请求失败' });
+      return;
+    }
+    const aiRaw = body.ai && typeof body.ai === 'object' && !Array.isArray(body.ai) ? body.ai : body;
+    const candidate = { ...config.ai, ...aiRaw };
+    const started = Date.now();
+    try {
+      const reply = await generate({ ai: candidate, prompt: '只回复两个字：正常', timeoutMs: 30000 });
+      json(res, 200, { ok: true, reply: String(reply).trim().slice(0, 200), latency_ms: Date.now() - started });
+    } catch (err) {
+      json(res, 200, { ok: false, error: err.message, latency_ms: Date.now() - started });
+    }
+    return;
+  }
+
   if (pathname === '/api/admin/data/clear' && req.method === 'POST') {
     let body;
     try {
@@ -1065,6 +1291,18 @@ async function handleApi(req, res, url) {
   }
   if (pathname === '/api/timeline' && req.method === 'GET') {
     handleTimeline(res, url);
+    return;
+  }
+  if (pathname === '/api/stats' && req.method === 'GET') {
+    handleStats(res, url);
+    return;
+  }
+  if (pathname === '/api/heatmap' && req.method === 'GET') {
+    handleHeatmap(res, url);
+    return;
+  }
+  if (pathname === '/api/ai/summary' && req.method === 'GET') {
+    await handleAiSummary(res, url);
     return;
   }
 
