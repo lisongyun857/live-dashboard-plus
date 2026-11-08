@@ -331,9 +331,10 @@ async function handleReport(req, res, url) {
     payload.app_id ?? payload.appId ?? payload.package ?? payload.app_package ?? payload.pkg,
     128
   );
+  const explicitApp = Boolean(appId);
   const appLabel = str(payload.app_label ?? payload.appLabel ?? payload.label ?? payload.app_name, 64);
   if (!appId) {
-    // 只上报屏幕状态时沿用上一次的应用，手机端不用再读前台应用
+    // 只上报屏幕/充电状态时沿用上一次的应用，手机端不用再读前台应用
     appId = previous ? previous.app_id : '';
     if (!appId) {
       json(res, 400, { error: 'app_id 不能为空' });
@@ -380,12 +381,13 @@ async function handleReport(req, res, url) {
   }
 
   // 息屏上报：结束后台当前应用段，之后的时间不计入使用时长
+  const prevScreenOn = previous ? previous.screen_on !== false : true;
   let screenOn = boolish(
     payload.screen_on ?? payload.screen ?? payload.screen_state ?? payload.screen_status ?? extraSrc.screen_on
   );
   if (screenOn === null && boolish(payload.screen_off) === true) screenOn = false;
   // 没带屏幕状态时沿用上一次：桌面 agent 默认亮屏，手机定时上报也不会把息屏改回亮屏
-  if (screenOn === null) screenOn = previous ? previous.screen_on !== false : true;
+  if (screenOn === null) screenOn = prevScreenOn;
   extra.screen_on = screenOn;
   const music = extraSrc.music;
   if (music && typeof music === 'object' && !Array.isArray(music)) {
@@ -411,6 +413,8 @@ async function handleReport(req, res, url) {
     startedAt,
     extra,
     screenOn,
+    // 只上报充电/息屏状态时只更新设备状态，不在时间线里重复记一条同一个应用
+    recordActivity: explicitApp || screenOn !== prevScreenOn,
   });
 
   broadcast('update', {

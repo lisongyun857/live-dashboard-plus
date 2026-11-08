@@ -116,7 +116,6 @@ function deviceSnippets(device) {
       app_id: '{app_package}',
       app_label: '{app_name}',
       battery_percent: '{battery}',
-      battery_charging: '{power}',
     }),
     curl: `curl -X POST "${url}" -H "Authorization: Bearer ${device.token}" -H "Content-Type: application/json" -d '{"app_id":"com.example.app","app_name":"示例应用"}'`,
     agent: `powershell -ExecutionPolicy Bypass -File agent\\pc-agent.ps1 -ServerUrl ${url} -Token ${device.token}`,

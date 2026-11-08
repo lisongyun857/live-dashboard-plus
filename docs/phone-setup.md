@@ -10,21 +10,23 @@
 
 1. 在面板「管理面板 → 设备管理」里找到手机设备（例如 `my-phone`），复制它的**设备令牌**。
 2. 确认后端地址可访问，例如 `https://api.example.com`。
-3. 手机安装 MacroDroid，并授予基础权限（见第五节）。
+3. 手机安装 MacroDroid，并授予基础权限（见后文「手机权限设置」）。
 
-最终会建 3 个宏：
+最终会建 5 个宏：
 
 | 宏 | 作用 | 触发器 |
 |---|---|---|
-| `LiveTracker` | 上报当前应用、电量、充电状态 | 应用启动/切换 + 每 1 分钟定时器 |
+| `LiveTracker` | 上报当前应用和电量 | 应用启动/切换 + 每 1 分钟定时器 |
+| `PowerOn` | 告诉面板开始充电了 | 电源已连接 |
+| `PowerOff` | 告诉面板电源断开了 | 电源已断开 |
 | `ScreenOff` | 告诉面板手机息屏了 | 屏幕关闭 |
 | `ScreenOn` | 告诉面板手机亮屏了 | 屏幕开启 |
 
-先建 `LiveTracker`，再建两个屏幕宏。**第一次上报必须先有应用信息**，否则服务端没有可沿用的应用。
+先建 `LiveTracker`，再建其余四个小宏。**第一次上报必须先有应用信息**，否则服务端没有可沿用的应用。
 
 ---
 
-## 二、宏 A：`LiveTracker`（应用 + 电量 + 充电）
+## 二、宏 A：`LiveTracker`（应用 + 电量）
 
 ### 1. 新建宏
 
@@ -64,7 +66,6 @@ MacroDroid → 新建宏 → 名称填 `LiveTracker`。
   "app_id": "{app_package}",
   "app_label": "{app_name}",
   "battery_percent": {battery},
-  "battery_charging": {power},
   "window_title": "{window_title}"
 }
 ```
@@ -76,7 +77,6 @@ MacroDroid → 新建宏 → 名称填 `LiveTracker`。
 | `app_id` | 前台应用包名 |
 | `app_label` | 前台应用名称 |
 | `battery_percent` | 电池电量 |
-| `battery_charging` | 充电状态（Power on/off） |
 | `window_title` | 窗口标题（没有就整行删掉） |
 
 不同 MacroDroid 版本占位符名字可能不同，以「…」列表插入的结果为准。没有的字段整行删掉即可，其余照常工作。
@@ -89,7 +89,41 @@ MacroDroid → 新建宏 → 名称填 `LiveTracker`。
 
 ---
 
-## 三、宏 B：`ScreenOff`（息屏）
+## 三、宏 B：`PowerOn`（电源已连接）
+
+1. 新建宏，名称 `PowerOn`。
+2. 触发器 → 电池 → **电源连接/断开**（Power Connect/Disconnect），选项选 **电源已连接**。
+3. 动作 → 网络互动 → **HTTP 请求**：
+   - 方法：`POST`
+   - URL：`https://api.example.com/api/report`
+   - 内容类型：`application/json`
+   - 请求头：`Authorization: Bearer <手机令牌>`（或令牌放 URL）
+   - 内容正文：
+
+```json
+{"battery_charging": true}
+```
+
+4. 保存并启用。
+
+---
+
+## 四、宏 C：`PowerOff`（电源已断开）
+
+和 `PowerOn` 一样，只改两处：
+
+- 触发器选项选 **电源已断开**
+- 内容正文：
+
+```json
+{"battery_charging": false}
+```
+
+> 这两个宏只负责充电状态，不需要 `app_id` 和电量：服务端会自动沿用上一次的应用和电量。插拔电源后面板会立即变成「⚡ 充电中」或「🔋 未充电」。
+
+---
+
+## 五、宏 D：`ScreenOff`（息屏）
 
 1. 新建宏，名称 `ScreenOff`。
 2. 触发器 → **屏幕开/关**（Screen On/Off），选项选 **屏幕关闭**。
@@ -108,7 +142,7 @@ MacroDroid → 新建宏 → 名称填 `LiveTracker`。
 
 ---
 
-## 四、宏 C：`ScreenOn`（亮屏）
+## 六、宏 E：`ScreenOn`（亮屏）
 
 和 `ScreenOff` 一样，只改两处：
 
@@ -125,7 +159,7 @@ MacroDroid → 新建宏 → 名称填 `LiveTracker`。
 
 ---
 
-## 五、手机权限设置（很关键）
+## 七、手机权限设置（很关键）
 
 MacroDroid 被系统杀掉后，宏就不会执行。请逐项确认：
 
@@ -151,12 +185,12 @@ MacroDroid 被系统杀掉后，宏就不会执行。请逐项确认：
 
 ---
 
-## 六、验证是否配置成功
+## 八、验证是否配置成功
 
 ### 1. 面板查看
 
-- 打开面板首页，手机设备卡片应显示当前应用、电量百分比；充电时显示「⚡ 充电中」。
-- 在手机上切换应用，约 1 分钟内面板应更新。
+- 打开面板首页，手机设备卡片应显示当前应用、电量百分比；充电时显示「⚡ 充电中」，拔掉电源后显示「🔋 未充电」。
+- 在手机上切换应用，约 1 分钟内面板应更新；插拔电源后充电状态应立即更新。
 - 手机息屏后：
   - 顶部主卡片显示「息屏中」；
   - 今日时间线上出现灰色「息屏」段；
@@ -188,35 +222,35 @@ MacroDroid → 宏详情 → 历史记录。如果宏触发但请求失败，会
 
 ---
 
-## 七、字段说明
+## 九、字段说明
 
 `POST /api/report` 支持以下字段（除 `app_id` 外都可选）：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `app_id` | string | 应用包名；只上报屏幕状态时可省略（服务端沿用上一次） |
+| `app_id` | string | 应用包名；只上报屏幕/充电状态时可省略（服务端沿用上一次） |
 | `app_label` | string | 应用显示名；缺省时服务端按内置映射/包名显示 |
 | `battery_percent` | number | 电量 0–100 |
-| `battery_charging` | boolean | 是否在充电；`{power}` 的 on/off 会自动解析 |
+| `battery_charging` | boolean | 是否在充电；由 `PowerOn` / `PowerOff` 两个宏上报 |
 | `screen_on` | boolean | 屏幕是否亮着；`false` 表示息屏，该时段不计入时长 |
 | `window_title` | string | 窗口标题（聊天/银行等私密应用会被服务端过滤） |
 | `timestamp` | ISO 时间 | 可选；不传则用服务端当前时间 |
 
 ---
 
-## 八、常见问题
+## 十、常见问题
 
 **面板不显示电量 / 充电状态**
 
-- `LiveTracker` 的请求体里没有 `battery_percent` / `battery_charging`，或占位符是手打的、没有被替换。
-- 用「…」重新插入「电池电量」「充电状态（Power on/off）」，保存宏后等一次定时器触发。
-- 个别机型/版本没有充电状态魔变文本，删掉该行即可，电量仍会显示。
+- 电量：`LiveTracker` 的请求体里没有 `battery_percent`，或占位符是手打的、没有被替换。用「…」重新插入「电池电量」，保存后等一次定时器触发。
+- 充电状态：`PowerOn` / `PowerOff` 没有启用，或它们的 URL / 令牌写错。插拔一次电源，到 MacroDroid 历史记录里看这两个宏是否触发、请求是否成功。
+- 设备卡片上的「🔋 未充电」只会在收到 `battery_charging: false` 后显示；从没上报过充电状态的设备只显示电量。
 
 **息屏后总时长还在涨**
 
 - `ScreenOff` 宏没有启用，或 URL / 令牌写错（MacroDroid 历史记录里看请求结果）。
 - `LiveTracker` 的请求体里写了 `screen_on`，定时器把状态改回亮屏了。删掉这一行。
-- 手机把 MacroDroid 杀了，屏幕关闭触发器没有执行。按第五节检查后台权限。
+- 手机把 MacroDroid 杀了，屏幕关闭触发器没有执行。按「手机权限设置」一节检查后台权限。
 
 **亮屏后一直显示「息屏中」**
 
@@ -244,7 +278,7 @@ MacroDroid → 宏详情 → 历史记录。如果宏触发但请求失败，会
 
 ---
 
-## 九、隐私说明
+## 十一、隐私说明
 
 - 上报内容是明文 JSON，**公网部署必须使用 HTTPS**。
 - 聊天、邮件、银行等私密应用的 `window_title` 会被服务端自动过滤，不会写入数据库。

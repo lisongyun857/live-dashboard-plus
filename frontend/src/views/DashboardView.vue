@@ -518,7 +518,7 @@ onBeforeUnmount(() => {
           <span class="online-dot" style="margin: 0"><i :style="{ background: focus.online ? 'var(--green)' : '#c4b8c6' }"></i></span>
         </div>
         <div class="hero-battery" v-if="focusBattery !== null" :class="{ charging: focusCharging }">
-          {{ focusCharging ? '⚡ 充电中' : '🔋 电池' }} {{ focusBattery }}%
+          {{ focusCharging ? '⚡ 充电中' : (focus.extra && focus.extra.battery_charging === false ? '🔋 未充电' : '🔋 电池') }} {{ focusBattery }}%
         </div>
         <div class="hero-updated mono">{{ focusUpdated }}</div>
       </div>
@@ -607,7 +607,7 @@ onBeforeUnmount(() => {
               class="battery"
               :class="{ low: Number(d.extra.battery_percent) <= 20, charging: Boolean(d.extra.battery_charging) }"
             >
-              <span>{{ d.extra.battery_charging ? '⚡ 充电中' : '🔋' }} {{ d.extra.battery_percent }}%</span>
+              <span>{{ d.extra.battery_charging ? '⚡ 充电中' : (d.extra.battery_charging === false ? '🔋 未充电' : '🔋') }} {{ d.extra.battery_percent }}%</span>
               <span class="battery-track"><i :style="{ width: Math.min(100, Math.max(0, Number(d.extra.battery_percent))) + '%' }"></i></span>
             </span>
             <span v-else></span>

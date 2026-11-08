@@ -62,13 +62,13 @@ class Store {
   /**
    * 写入一次上报。同一设备 10 秒内重复上报同一应用只记一条活动，但状态总是刷新。
    */
-  report({ device, appId, appName, displayTitle, startedAt, extra, screenOn = true }) {
+  report({ device, appId, appName, displayTitle, startedAt, extra, screenOn = true, recordActivity = true }) {
     const bucket = Math.floor(Date.now() / 10000);
     // 屏幕开关也算一次边界，避免刚切应用就息屏时丢掉这一段的结束时间
     const dedupeKey = `${device.id}|${appId}|${bucket}|${screenOn ? 1 : 0}`;
     let recorded = false;
 
-    if (this.lastKeys.get(device.id) !== dedupeKey) {
+    if (recordActivity && this.lastKeys.get(device.id) !== dedupeKey) {
       this.lastKeys.set(device.id, dedupeKey);
       this.state.activities.push({
         id: this.state.nextId++,

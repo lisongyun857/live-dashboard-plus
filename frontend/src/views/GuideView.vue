@@ -15,8 +15,7 @@ const curlExample = computed(
 const macroBody = `{
   "app_id": "{app_package}",
   "app_label": "{app_name}",
-  "battery_percent": {battery},
-  "battery_charging": {power}
+  "battery_percent": {battery}
 }`;
 
 const agentCmd = `powershell -ExecutionPolicy Bypass -File agent\\pc-agent.ps1 -ServerUrl https://你的后端API域名 -Token 电脑令牌`;
@@ -175,9 +174,10 @@ onMounted(async () => {
               <tr><td>请求体</td><td>见下方 JSON</td></tr>
             </tbody>
           </table>
-          <p>请求体里的占位符都是 MacroDroid 的魔变文本，插入时会自动替换成实际值。请点输入框旁的「…」按钮，从列表里插入「前台应用名称 / 前台应用包名 / 电池电量 / 充电状态（Power on/off）」，不要直接手打占位符（不同版本的名字可能不一样）。</p>
+          <p>请求体里的占位符都是 MacroDroid 的魔变文本，插入时会自动替换成实际值。请点输入框旁的「…」按钮，从列表里插入「前台应用名称 / 前台应用包名 / 电池电量」，不要直接手打占位符（不同版本的名字可能不一样）。</p>
           <CodeBlock :code="macroBody" />
-          <p><span class="inline-code">battery_percent</span> 和 <span class="inline-code">battery_charging</span> 会显示在面板的设备卡片上。如果某些机型没有对应魔变文本，把那一行删掉也能正常工作。</p>
+          <p><span class="inline-code">battery_percent</span> 会显示在面板的设备卡片上。如果某些机型没有对应魔变文本，把那一行删掉也能正常工作。</p>
+          <p><b>充电状态</b>：再建两个小宏，触发器选「电池 → 电源连接/断开」，分别选「电源已连接」和「电源已断开」，请求体只写 <span class="inline-code">{"battery_charging":true}</span> 和 <span class="inline-code">{"battery_charging":false}</span>（URL、令牌同上）。服务端会自动沿用上一次的应用和电量，插拔电源后面板立刻显示「⚡ 充电中」或「🔋 未充电」。</p>
           <p>想同时上报窗口标题，可以加 <span class="inline-code">"window_title": "{window_title}"</span>（聊天、银行等私密应用会自动隐藏标题）。</p>
           <p>如果你的 MacroDroid 版本找不到自定义请求头，也可以把令牌放到 URL 后面：<span class="inline-code">/api/report?token=&lt;手机令牌&gt;</span>，效果一样。</p>
           <p><b>息屏不计时</b>：再建两个小宏，触发器分别选「屏幕关闭」和「屏幕开启」，动作都是一个 HTTP 请求，请求体只写 <span class="inline-code">{"screen_on":false}</span> 和 <span class="inline-code">{"screen_on":true}</span>（URL、令牌同上）。服务端会自动沿用这台手机上一次的应用，不用再填 <span class="inline-code">app_id</span>；息屏期间的时间线会显示为灰色且不计入时长。</p>

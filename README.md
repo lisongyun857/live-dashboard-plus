@@ -59,7 +59,7 @@ frontend/dist/ 纯静态文件 ──上传──▶
 - [第五步 · 部署前端（另一个域名）+ HTTPS](#第五步--部署前端另一个域名--https)
 - [电脑接入（PC Agent）](#电脑接入pc-agent)
 - [手机接入（MacroDroid）](#手机接入macrodroid)
-- [手机端完整配置说明](docs/phone-setup.md)（3 个宏、后台权限、验证与排错）
+- [手机端完整配置说明](docs/phone-setup.md)（5 个宏、后台权限、验证与排错）
 - [使用原理](#使用原理)
 - [配置文件说明](#配置文件说明)
 - [API 一览](#api-一览)
@@ -452,15 +452,14 @@ Invoke-RestMethod -Uri https://api.example.com/api/health
   "app_id": "{app_package}",
   "app_label": "{app_name}",
   "battery_percent": {battery},
-  "battery_charging": {power},
   "window_title": "{window_title}"
 }
 ```
 
-- 上面这些占位符都是 MacroDroid 魔变文本，插入时自动替换；不确定写法就点输入框旁的「…」从列表插入「前台应用名称 / 前台应用包名 / 电池电量 / 充电状态（Power on/off）」，不要手打占位符。
-- `battery_percent` 和 `battery_charging` 会显示在面板的设备卡片上。
-- 有的机型没有 `{battery}`、`{power}` 或 `{window_title}`：把对应那一行整行删掉，其余照常工作。
-- **息屏不计时**：再建两个小宏，触发器分别选「屏幕关闭」「屏幕开启」，动作都是一个 HTTP 请求，请求体只写 `{"screen_on":false}` / `{"screen_on":true}`（URL、令牌同上）。服务端会自动沿用这台手机上一次的应用，不用填 `app_id`；息屏期间时间线显示为灰色，且不计入使用时长。
+- 上面这些占位符都是 MacroDroid 魔变文本，插入时自动替换；不确定写法就点输入框旁的「…」从列表插入「前台应用名称 / 前台应用包名 / 电池电量」，不要手打占位符。
+- `battery_percent` 会显示在面板的设备卡片上；有的机型没有 `{battery}` 或 `{window_title}`：把对应那一行整行删掉，其余照常工作。
+- **充电状态**：再建两个小宏 `PowerOn` / `PowerOff`，触发器选「电池 → 电源连接/断开」，分别选「电源已连接」「电源已断开」，请求体只写 `{"battery_charging":true}` / `{"battery_charging":false}`（URL、令牌同上）。面板会立即显示「⚡ 充电中」或「🔋 未充电」。
+- **息屏不计时**：再建两个小宏 `ScreenOff` / `ScreenOn`，触发器分别选「屏幕关闭」「屏幕开启」，请求体只写 `{"screen_on":false}` / `{"screen_on":true}`（URL、令牌同上）。服务端会自动沿用这台手机上一次的应用，不用填 `app_id`；息屏期间时间线显示为灰色，且不计入使用时长。
 - 如果 MacroDroid 版本找不到自定义请求头，可以把令牌放到 URL 上，效果一样：`https://api.example.com/api/report?token=<手机令牌>`。
 - 聊天/邮件/银行类应用的窗口标题会被服务端自动过滤，不会落盘。
 
